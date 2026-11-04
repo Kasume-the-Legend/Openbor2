@@ -10,7 +10,9 @@
 #include <stdarg.h>
 #include <ctype.h>
 #include <SDL.h>
+#if defined(__GNUC__) && !defined(__clang__)
 #pragma GCC diagnostic ignored "-Wformat-truncation"
+#endif
 #include "netplay.h"
 #ifdef NETPLAY_TLS
 #include <mbedtls/ssl.h>
