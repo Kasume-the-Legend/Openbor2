@@ -14,6 +14,8 @@ jobs:
         run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;21.4.7075529" "build-tools;36.0.0" "platforms;android-35"
       - name: Build
         working-directory: engine/android
+        env:
+          OPENBOR_RELAY_URL: ${{ vars.RELAY_URL }}   # e.g. wss://openbor-online-relay.YOURNAME.workers.dev/ws (repo Settings > Variables)
         run: |
           chmod +x gradlew
           ./gradlew --no-daemon assembleDebug

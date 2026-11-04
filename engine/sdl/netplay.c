@@ -12,6 +12,12 @@
 #include <SDL.h>
 #pragma GCC diagnostic ignored "-Wformat-truncation"
 #include "netplay.h"
+#ifdef NETPLAY_TLS
+#include <mbedtls/ssl.h>
+#include <mbedtls/net_sockets.h>
+#include <mbedtls/entropy.h>
+#include <mbedtls/ctr_drbg.h>
+#endif
 #define hankaku_font10 np_font10   /* the font table lives in a header; keep this file's copy private */
 #include "hankaku.h"
 
@@ -48,6 +54,8 @@ static nsock_t sock = NS_INVALID;
 static char inbuf[16384]; static int inlen = 0;
 static char outbuf[16384]; static int outlen = 0;
 static char cfg_host[128] = "127.0.0.1"; static int cfg_port = 7777; static char cfg_name[24] = "Player";
+static int cfg_tls = 0, cfg_ws = 0; static char cfg_path[128] = "/ws";     /* wss://host/path = WebSocket over TLS (Cloudflare); host:port = plain TCP relay */
+static unsigned char win[8192]; static int winlen = 0;                       /* raw bytes from the wire (WebSocket frames) */
 
 /* room state */
 static char room_code[16] = "";
@@ -83,26 +91,38 @@ static FILE *open_ini(void)
     return f;
 }
 
+/* "wss://host[:port][/path]", "ws://host[:port][/path]" or "host[:port]" */
+static void parse_server(const char *v)
+{
+    char tmp[200], *c, *sl; const char *h = v;
+    cfg_tls = cfg_ws = 0; cfg_port = 7777; snprintf(cfg_path, sizeof cfg_path, "/ws");
+    if (!strncmp(v, "wss://", 6)) { cfg_tls = cfg_ws = 1; cfg_port = 443; h = v + 6; }
+    else if (!strncmp(v, "ws://", 5)) { cfg_ws = 1; cfg_port = 80; h = v + 5; }
+    else if (!strncmp(v, "https://", 8)) { cfg_tls = cfg_ws = 1; cfg_port = 443; h = v + 8; }
+    snprintf(tmp, sizeof tmp, "%s", h);
+    if (cfg_ws && (sl = strchr(tmp, '/'))) { if (sl[1]) snprintf(cfg_path, sizeof cfg_path, "%s", sl); *sl = 0; }
+    c = strrchr(tmp, ':'); if (c) { *c = 0; cfg_port = atoi(c + 1); }
+    snprintf(cfg_host, sizeof cfg_host, "%s", tmp);
+}
+
 static void load_config(void)
 {
     FILE *f = open_ini(); char line[200];
     const char *e;
+#ifdef NETPLAY_DEFAULT_SERVER
+    parse_server(NETPLAY_DEFAULT_SERVER);        /* baked in at build time (RELAY_URL); netplay.ini or OPENBOR_RELAY still override it */
+#endif
     if (f)
     {
         while (fgets(line, sizeof line, f))
         {
             trim(line);
-            if (!strncmp(line, "server=", 7))
-            {
-                char *c = strrchr(line + 7, ':');
-                if (c) { *c = 0; cfg_port = atoi(c + 1); }
-                snprintf(cfg_host, sizeof cfg_host, "%s", line + 7);
-            }
+            if (!strncmp(line, "server=", 7)) parse_server(line + 7);
             else if (!strncmp(line, "name=", 5)) snprintf(cfg_name, sizeof cfg_name, "%.16s", line + 5);
         }
         fclose(f);
     }
-    if ((e = getenv("OPENBOR_RELAY")) && *e) { char tmp[128]; char *c; snprintf(tmp, sizeof tmp, "%s", e); c = strrchr(tmp, ':'); if (c) { *c = 0; cfg_port = atoi(c + 1); } snprintf(cfg_host, sizeof cfg_host, "%s", tmp); }
+    if ((e = getenv("OPENBOR_RELAY")) && *e) parse_server(e);
     if ((e = getenv("OPENBOR_NAME")) && *e) snprintf(cfg_name, sizeof cfg_name, "%.16s", e);
     { char *p; for (p = cfg_name; *p; p++) if (!isalnum((unsigned char)*p) && *p != ' ' && *p != '-' && *p != '_') *p = '_'; }
     if (!cfg_name[0]) snprintf(cfg_name, sizeof cfg_name, "Player");
@@ -140,6 +160,129 @@ void netplay_pakid(const char *path, char *out, int outlen)
     snprintf(out, outlen, "%lx-%08x", size, crc);
 }
 
+/* ------------------------------------------------------------------ transport: TCP, optionally TLS, optionally WebSocket */
+#define TR_WB (-1)      /* would block */
+#define TR_ERR (-2)
+#ifdef NETPLAY_TLS
+static mbedtls_net_context tls_net; static mbedtls_ssl_context tls_ssl; static mbedtls_ssl_config tls_conf;
+static mbedtls_entropy_context tls_ent; static mbedtls_ctr_drbg_context tls_drbg; static int tls_up = 0, tls_pend = 0;
+#endif
+
+static void tr_close(void)
+{
+#ifdef NETPLAY_TLS
+    if (tls_up) { mbedtls_ssl_close_notify(&tls_ssl); mbedtls_ssl_free(&tls_ssl); mbedtls_ssl_config_free(&tls_conf); mbedtls_ctr_drbg_free(&tls_drbg); mbedtls_entropy_free(&tls_ent); tls_up = 0; tls_pend = 0; }
+#endif
+    if (sock != NS_INVALID) ns_close(sock);
+    sock = NS_INVALID; winlen = 0;
+}
+
+static int tr_write(const void *p, int n)
+{
+#ifdef NETPLAY_TLS
+    if (tls_up)
+    {
+        int use = tls_pend ? tls_pend : n, r;
+        r = mbedtls_ssl_write(&tls_ssl, (const unsigned char *)p, use);
+        if (r > 0) { tls_pend = 0; return r; }
+        if (r == MBEDTLS_ERR_SSL_WANT_WRITE || r == MBEDTLS_ERR_SSL_WANT_READ) { tls_pend = use; return TR_WB; }
+        return TR_ERR;
+    }
+#endif
+    { int r = (int)send(sock, (const char *)p, n, 0); if (r > 0) return r; if (r < 0 && ns_wouldblock()) return TR_WB; return TR_ERR; }
+}
+
+static int tr_read(void *p, int n)   /* >0 bytes, 0 = closed, TR_WB, TR_ERR */
+{
+#ifdef NETPLAY_TLS
+    if (tls_up)
+    {
+        int r = mbedtls_ssl_read(&tls_ssl, (unsigned char *)p, n);
+        if (r > 0) return r;
+        if (r == MBEDTLS_ERR_SSL_WANT_READ || r == MBEDTLS_ERR_SSL_WANT_WRITE) return TR_WB;
+        if (r == 0 || r == MBEDTLS_ERR_SSL_PEER_CLOSE_NOTIFY) return 0;
+        return TR_ERR;
+    }
+#endif
+    { int r = (int)recv(sock, (char *)p, n, 0); if (r > 0) return r; if (r == 0) return 0; return ns_wouldblock() ? TR_WB : TR_ERR; }
+}
+
+static int tr_tls_start(void)
+{
+#ifdef NETPLAY_TLS
+    Uint32 t0 = SDL_GetTicks(); int r;
+    mbedtls_net_init(&tls_net); tls_net.fd = (int)sock;
+    mbedtls_ssl_init(&tls_ssl); mbedtls_ssl_config_init(&tls_conf); mbedtls_entropy_init(&tls_ent); mbedtls_ctr_drbg_init(&tls_drbg);
+    tls_up = 1; tls_pend = 0;
+    if (mbedtls_ctr_drbg_seed(&tls_drbg, mbedtls_entropy_func, &tls_ent, (const unsigned char *)"openbor", 7) != 0) goto fail;
+    if (mbedtls_ssl_config_defaults(&tls_conf, MBEDTLS_SSL_IS_CLIENT, MBEDTLS_SSL_TRANSPORT_STREAM, MBEDTLS_SSL_PRESET_DEFAULT) != 0) goto fail;
+    /* Only game button presses and room codes travel here, and a phone has no CA store we can rely on, so the
+       connection is encrypted but the server certificate is not checked. */
+    mbedtls_ssl_conf_authmode(&tls_conf, MBEDTLS_SSL_VERIFY_NONE);
+    mbedtls_ssl_conf_rng(&tls_conf, mbedtls_ctr_drbg_random, &tls_drbg);
+    if (mbedtls_ssl_setup(&tls_ssl, &tls_conf) != 0) goto fail;
+    mbedtls_ssl_set_hostname(&tls_ssl, cfg_host);                       /* SNI: Cloudflare needs it */
+    mbedtls_ssl_set_bio(&tls_ssl, &tls_net, mbedtls_net_send, mbedtls_net_recv, NULL);
+    while ((r = mbedtls_ssl_handshake(&tls_ssl)) != 0)
+    {
+        if ((r != MBEDTLS_ERR_SSL_WANT_READ && r != MBEDTLS_ERR_SSL_WANT_WRITE) || SDL_GetTicks() - t0 > 10000) goto fail;
+        SDL_Delay(5);
+    }
+    return 1;
+fail:
+    snprintf(last_err, sizeof last_err, "secure connection to %s failed", cfg_host);
+    return 0;
+#else
+    snprintf(last_err, sizeof last_err, "this build has no wss:// support");
+    return 0;
+#endif
+}
+
+static const char b64t[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+static unsigned rng_state = 0x9e3779b9u;
+static unsigned rng_next(void) { rng_state ^= rng_state << 13; rng_state ^= rng_state >> 17; rng_state ^= rng_state << 5; return rng_state; }
+
+static int ws_handshake(void)
+{
+    char req[512], key[32], resp[2048]; unsigned char raw[16]; int i, n, sent = 0, got = 0, hdr = -1; Uint32 t0 = SDL_GetTicks();
+    rng_state ^= (unsigned)SDL_GetTicks() * 2654435761u; if (!rng_state) rng_state = 1;
+    for (i = 0; i < 16; i++) raw[i] = (unsigned char)(rng_next() >> 11);
+    for (i = 0; i < 15; i += 3) { unsigned v = (raw[i] << 16) | (raw[i + 1] << 8) | raw[i + 2]; key[i / 3 * 4] = b64t[v >> 18]; key[i / 3 * 4 + 1] = b64t[(v >> 12) & 63]; key[i / 3 * 4 + 2] = b64t[(v >> 6) & 63]; key[i / 3 * 4 + 3] = b64t[v & 63]; }
+    { unsigned v = raw[15] << 16; key[20] = b64t[v >> 18]; key[21] = b64t[(v >> 12) & 63]; key[22] = '='; key[23] = '='; key[24] = 0; }
+    n = snprintf(req, sizeof req, "GET %s HTTP/1.1\r\nHost: %s\r\nUser-Agent: OpenBOR-Online\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: %s\r\nSec-WebSocket-Version: 13\r\n\r\n", cfg_path, cfg_host, key);
+    while (sent < n)
+    {
+        int r = tr_write(req + sent, n - sent);
+        if (r > 0) sent += r; else if (r == TR_WB && SDL_GetTicks() - t0 < 10000) SDL_Delay(5); else goto fail;
+    }
+    while (hdr < 0)
+    {
+        int r = tr_read(resp + got, (int)sizeof resp - 1 - got);
+        if (r > 0) { got += r; resp[got] = 0; { char *e = strstr(resp, "\r\n\r\n"); if (e) hdr = (int)(e - resp) + 4; } if (got >= (int)sizeof resp - 1 && hdr < 0) goto fail; }
+        else if (r == TR_WB && SDL_GetTicks() - t0 < 10000) SDL_Delay(5);
+        else goto fail;
+    }
+    if (strncmp(resp, "HTTP/1.1 101", 12)) goto fail;
+    winlen = 0; if (got > hdr && got - hdr <= (int)sizeof win) { memcpy(win, resp + hdr, got - hdr); winlen = got - hdr; }
+    return 1;
+fail:
+    snprintf(last_err, sizeof last_err, "relay at %s did not accept the connection", cfg_host);
+    return 0;
+}
+
+/* wrap one message in a (masked, as clients must) WebSocket frame and queue it */
+static void ws_frame(int opcode, const unsigned char *pl, int n)
+{
+    unsigned char hdr[8]; int hl = 0, i; unsigned m = rng_next();
+    if (n > 125) return;
+    if (outlen + 6 + n > (int)sizeof outbuf) return;
+    hdr[hl++] = 0x80 | opcode; hdr[hl++] = 0x80 | n;
+    memcpy(hdr + hl, &m, 4);
+    memcpy(outbuf + outlen, hdr, hl + 4); 
+    for (i = 0; i < n; i++) outbuf[outlen + hl + 4 + i] = (char)(pl[i] ^ ((unsigned char *)&m)[i & 3]);
+    outlen += hl + 4 + n;
+}
+
 /* ------------------------------------------------------------------ sockets */
 static int ns_connect(void)
 {
@@ -155,12 +298,14 @@ static int ns_connect(void)
         sock = socket(a->ai_family, a->ai_socktype, a->ai_protocol);
         if (sock == NS_INVALID) continue;
         if (connect(sock, a->ai_addr, (int)a->ai_addrlen) == 0) break;
-        ns_close(sock); sock = NS_INVALID;
+        tr_close();
     }
     freeaddrinfo(res);
     if (sock == NS_INVALID) { snprintf(last_err, sizeof last_err, "cannot connect to %s:%d", cfg_host, cfg_port); return 0; }
     setsockopt(sock, IPPROTO_TCP, TCP_NODELAY, (const char *)&one, sizeof one);
-    ns_nonblock(sock); inlen = outlen = 0;
+    ns_nonblock(sock); inlen = outlen = winlen = 0;
+    if (cfg_tls && !tr_tls_start()) { tr_close(); return 0; }
+    if (cfg_ws && !ws_handshake()) { tr_close(); return 0; }
     return 1;
 }
 
@@ -168,10 +313,10 @@ static void ns_flush(void)
 {
     while (outlen > 0 && sock != NS_INVALID)
     {
-        int n = (int)send(sock, outbuf, outlen, 0);
+        int n = tr_write(outbuf, outlen);
         if (n > 0) { memmove(outbuf, outbuf + n, outlen - n); outlen -= n; }
-        else if (n < 0 && ns_wouldblock()) break;
-        else { ns_close(sock); sock = NS_INVALID; break; }
+        else if (n == TR_WB) break;
+        else { tr_close(); break; }
     }
 }
 
@@ -180,11 +325,31 @@ static void ns_send(const char *fmt, ...)
     char line[200]; int n; va_list ap;
     va_start(ap, fmt); vsnprintf(line, sizeof line - 2, fmt, ap); va_end(ap);
     n = (int)strlen(line); line[n++] = '\n';
-    if (outlen + n > (int)sizeof outbuf) { ns_flush(); if (outlen + n > (int)sizeof outbuf) return; }
-    memcpy(outbuf + outlen, line, n); outlen += n; ns_flush();
+    if (outlen + n + 8 > (int)sizeof outbuf) { ns_flush(); if (outlen + n + 8 > (int)sizeof outbuf) return; }
+    if (cfg_ws) ws_frame(1, (const unsigned char *)line, n);
+    else { memcpy(outbuf + outlen, line, n); outlen += n; }
+    ns_flush();
 }
 
 static void handle_line(char *line);
+/* pull complete WebSocket frames out of win[] and append their text to inbuf */
+static void ws_parse(void)
+{
+    for (;;)
+    {
+        int op, len, hl = 2;
+        if (winlen < 2) return;
+        op = win[0] & 15; len = win[1] & 127;
+        if (len == 126) { if (winlen < 4) return; len = (win[2] << 8) | win[3]; hl = 4; }
+        else if (len == 127) { tr_close(); return; }                       /* far larger than any message we use */
+        if (winlen < hl + len) { if (hl + len > (int)sizeof win) tr_close(); return; }
+        if (op == 1 || op == 2 || op == 0) { int k = len; if (inlen + k > (int)sizeof inbuf) k = (int)sizeof inbuf - inlen; memcpy(inbuf + inlen, win + hl, k); inlen += k; }
+        else if (op == 9) { if (len <= 125) ws_frame(10, win + hl, len); }
+        else if (op == 8) { tr_close(); return; }
+        memmove(win, win + hl + len, winlen - hl - len); winlen -= hl + len;
+    }
+}
+
 static void ns_poll(void)
 {
     char tmp[4096]; int n;
@@ -192,15 +357,25 @@ static void ns_poll(void)
     ns_flush();
     for (;;)
     {
-        n = (int)recv(sock, tmp, sizeof tmp, 0);
+        if (sock == NS_INVALID) break;
+        n = tr_read(tmp, sizeof tmp);
         if (n > 0)
         {
-            if (inlen + n > (int)sizeof inbuf) n = (int)sizeof inbuf - inlen;
-            memcpy(inbuf + inlen, tmp, n); inlen += n;
+            if (cfg_ws)
+            {
+                if (winlen + n > (int)sizeof win) n = (int)sizeof win - winlen;
+                memcpy(win + winlen, tmp, n); winlen += n; ws_parse();
+            }
+            else
+            {
+                if (inlen + n > (int)sizeof inbuf) n = (int)sizeof inbuf - inlen;
+                memcpy(inbuf + inlen, tmp, n); inlen += n;
+            }
         }
-        else if (n == 0) { ns_close(sock); sock = NS_INVALID; break; }
-        else { if (!ns_wouldblock()) { ns_close(sock); sock = NS_INVALID; } break; }
+        else if (n == 0 || n == TR_ERR) { tr_close(); break; }
+        else break;
     }
+    if (cfg_ws && sock != NS_INVALID) ns_flush();                          /* pong replies */
     for (;;)
     {
         char *nl = (char *)memchr(inbuf, '\n', inlen); int len;
@@ -478,7 +653,7 @@ int netplay_lobby(const char *pakid)
         memset(valid, 0, sizeof valid); memset(inputs, 0, sizeof inputs); memset(myhash_ok, 0, sizeof myhash_ok); memset(rhash_ok, 0, sizeof rhash_ok);
         local_prev = 0; base_set = 0; fuzz_state = 12345u + (unsigned)my_slot * 7919u;
     }
-    else if (sock != NS_INVALID) { ns_send("LEAVE"); ns_flush(); ns_close(sock); sock = NS_INVALID; }
+    else if (sock != NS_INVALID) { ns_send("LEAVE"); ns_flush(); tr_close(); }
     return result;
 }
 
@@ -547,6 +722,6 @@ void netplay_check(unsigned hash)
 
 void netplay_shutdown(void)
 {
-    if (sock != NS_INVALID) { ns_send("LEAVE"); ns_flush(); ns_close(sock); sock = NS_INVALID; }
+    if (sock != NS_INVALID) { ns_send("LEAVE"); ns_flush(); tr_close(); }
     netplay.active = 0;
 }

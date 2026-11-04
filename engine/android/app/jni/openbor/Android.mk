@@ -53,7 +53,10 @@ include $(CLEAR_VARS)
 
 LOCAL_MODULE    := openbor
 LOCAL_CFLAGS    := -g -O2 -Wall -Werror -Wno-unused-result -fsigned-char -fno-ident -freorder-blocks
-LOCAL_CFLAGS    += -DLINUX -DSDL=1 -DANDROID=1 -DTREMOR=1 -DWEBM=1
+LOCAL_CFLAGS    += -DLINUX -DSDL=1 -DANDROID=1 -DTREMOR=1 -DWEBM=1 -DNETPLAY_TLS=1
+ifneq ($(strip $(OPENBOR_RELAY_URL)),)
+LOCAL_CFLAGS    += -DNETPLAY_DEFAULT_SERVER=\"$(strip $(OPENBOR_RELAY_URL))\"
+endif
 LOCAL_CPPFLAGS  := ${LOCAL_CFLAGS}
 
 LOCAL_C_INCLUDES  :=  \
@@ -102,7 +105,7 @@ LOCAL_SRC_FILES += SDL_android_main.cpp
 
 LOCAL_LDLIBS := -ldl -lGLESv2 -llog
 
-LOCAL_STATIC_LIBRARIES := png vorbisidec SDL2 vpx libhidapi
+LOCAL_STATIC_LIBRARIES := png vorbisidec SDL2 vpx libhidapi mbedtls_all
 
 include $(BUILD_SHARED_LIBRARY)
 $(call import-module,android/cpufeatures)

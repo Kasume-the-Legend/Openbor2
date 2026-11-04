@@ -1,0 +1,1 @@
+{ "name": "openbor-online-relay", "private": true, "scripts": { "dev": "wrangler dev", "deploy": "wrangler deploy" }, "devDependencies": { "wrangler": "^3.99.0" } }

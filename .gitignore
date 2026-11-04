@@ -1,3 +1,6 @@
 engine/android/app/build/
 engine/android/.gradle/
 *.o
+cloudflare/node_modules/
+cloudflare/.wrangler/
+cloudflare/deploy.log
