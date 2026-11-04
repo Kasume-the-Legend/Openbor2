@@ -529,8 +529,10 @@ static int lobby_open(void)
     SDL_StartTextInput();
     return 1;
 }
+static void audio_test_stop(void);
 static void lobby_close(void)
 {
+    audio_test_stop();
     SDL_StopTextInput();
     if (lsurf) { SDL_FreeSurface(lsurf); lsurf = NULL; }
     if (l_engine_win) { video_lobby_release(); l_engine_win = 0; }
@@ -553,9 +555,34 @@ static int connect_and_hello(void)
     ns_send("HELLO 1 %s", cfg_name); return 1;
 }
 
+/* "Test sound": plays a 1 second beep through SDL, independent of the game, and shows which audio driver the phone gave us. */
+static SDL_AudioDeviceID at_dev = 0; static Uint32 at_until = 0; static unsigned at_phase = 0;
+static void at_callback(void *ud, Uint8 *stream, int len)
+{
+    short *o = (short *)stream; int i, n = len / 4; (void)ud;
+    for (i = 0; i < n; i++) { short v = (short)(((at_phase / 50) & 1) ? 6000 : -6000); at_phase++; o[2 * i] = v; o[2 * i + 1] = v; }   /* ~440 Hz square at 44.1 kHz */
+}
+static void audio_test_start(void)
+{
+    SDL_AudioSpec want, got; const char *drv;
+    if (at_dev) { SDL_CloseAudioDevice(at_dev); at_dev = 0; }
+    if (!SDL_WasInit(SDL_INIT_AUDIO) && SDL_InitSubSystem(SDL_INIT_AUDIO) < 0) { snprintf(last_err, sizeof last_err, "sound: cannot start audio: %.60s", SDL_GetError()); return; }
+    SDL_zero(want); want.freq = 44100; want.format = AUDIO_S16SYS; want.channels = 2; want.samples = 1024; want.callback = at_callback;
+    at_dev = SDL_OpenAudioDevice(NULL, 0, &want, &got, 0);
+    drv = SDL_GetCurrentAudioDriver();
+    if (!at_dev) { snprintf(last_err, sizeof last_err, "sound FAILED (%s): %.50s", drv ? drv : "no driver", SDL_GetError()); return; }
+    SDL_PauseAudioDevice(at_dev, 0); at_until = SDL_GetTicks() + 1200;
+    snprintf(last_err, sizeof last_err, "sound opened: %s %dHz - did you hear a beep?", drv ? drv : "?", got.freq);
+}
+static void audio_test_stop(void) { if (at_dev) { SDL_CloseAudioDevice(at_dev); at_dev = 0; } }
+static void audio_test_tick(void)
+{
+    if (at_dev && SDL_GetTicks() > at_until) { SDL_CloseAudioDevice(at_dev); at_dev = 0; }
+}
+
 int netplay_lobby(const char *pakid)
 {
-    const char *items[] = { "Host a public game", "Host a private game", "Join with a room code", "Browse public games", "Play offline", "Quit" };
+    const char *items[] = { "Host a public game", "Host a private game", "Join with a room code", "Browse public games", "Play offline", "Test sound", "Quit" };
     lscreen scr = S_MENU; int sel = 0, running = 1, result = 0, i;
     char code[8] = ""; int codelen = 0; int lsel = 0;
     const char *auto_mode = getenv("NETPLAY_AUTO"); int auto_need = getenv("NETPLAY_N") ? atoi(getenv("NETPLAY_N")) : 2;
@@ -582,7 +609,7 @@ int netplay_lobby(const char *pakid)
                 int ww = LW, wh = LH, tx, ty, vk = 0;
                 if (l_engine_win) { if (!video_lobby_map(e.button.x, e.button.y, LW, LH, &tx, &ty)) { tx = ty = -100; } }
                 else { SDL_GetWindowSize(lwin, &ww, &wh); tx = e.button.x * LW / (ww > 0 ? ww : LW); ty = e.button.y * LH / (wh > 0 ? wh : LH); }
-                if (scr == S_MENU) { for (i = 0; i < 6; i++) if (ty >= 42 + i * 16 && ty < 42 + i * 16 + 15) { sel = i; vk = SDLK_RETURN; } }
+                if (scr == S_MENU) { for (i = 0; i < 7; i++) if (ty >= 42 + i * 16 && ty < 42 + i * 16 + 15) { sel = i; vk = SDLK_RETURN; } }
                 else if (scr == S_CODE)
                 {
                     if (ty >= 120 && ty < 142 && tx >= 12 && tx < 100) vk = SDLK_RETURN;
@@ -608,13 +635,14 @@ int netplay_lobby(const char *pakid)
                 SDL_Keycode k = e.key.keysym.sym;
                 if (scr == S_MENU)
                 {
-                    if (k == SDLK_UP) sel = (sel + 5) % 6; else if (k == SDLK_DOWN) sel = (sel + 1) % 6;
+                    if (k == SDLK_UP) sel = (sel + 6) % 7; else if (k == SDLK_DOWN) sel = (sel + 1) % 7;
                     else if (k == SDLK_ESCAPE) { result = -1; running = 0; }
                     else if (k == SDLK_RETURN || k == SDLK_KP_ENTER)
                     {
                         last_err[0] = 0;
                         if (sel == 4) { result = 0; running = 0; }
-                        else if (sel == 5) { result = -1; running = 0; }
+                        else if (sel == 5) { audio_test_start(); }
+                        else if (sel == 6) { result = -1; running = 0; }
                         else if (!connect_and_hello()) { /* last_err set */ }
                         else if (sel == 0 || sel == 1) { ns_send("HOST %d 4 %s", sel == 0 ? 1 : 0, pakid); scr = S_ROOM; }
                         else if (sel == 2) { scr = S_CODE; codelen = 0; code[0] = 0; }
@@ -663,10 +691,10 @@ int netplay_lobby(const char *pakid)
         draw_header(scr == S_MENU ? "Each player needs the same game file." : scr == S_CODE ? "Type the 5-letter room code" : scr == S_LIST ? "Public games (F5 refresh)" : "Room");
         if (scr == S_MENU)
         {
-            for (i = 0; i < 6; i++) { if (i == sel) lrect(8, 44 + i * 16 - 2, LW - 16, 14, C_SEL); ltext(16, 44 + i * 16, i == sel ? C_TXT : C_DIM, items[i]); }
-            ltext(12, 150, C_DIM, "Tap an option (or Up/Down + Enter)");
-            { char b[96]; snprintf(b, sizeof b, "Name: %s   Relay: %s:%d", cfg_name, cfg_host, cfg_port); ltext(12, 166, C_DIM, b); }
-            if (last_err[0]) ltext(12, 182, C_HOT, last_err);
+            for (i = 0; i < 7; i++) { if (i == sel) lrect(8, 44 + i * 16 - 2, LW - 16, 14, C_SEL); ltext(16, 44 + i * 16, i == sel ? C_TXT : C_DIM, items[i]); }
+            ltext(12, 158, C_DIM, "Tap an option (or Up/Down + Enter)");
+            { char b[96]; snprintf(b, sizeof b, "Name: %s   Relay: %s:%d", cfg_name, cfg_host, cfg_port); ltext(12, 170, C_DIM, b); }
+            if (last_err[0]) ltext(12, 184, C_HOT, last_err);
         }
         else if (scr == S_CODE)
         {
@@ -704,6 +732,7 @@ int netplay_lobby(const char *pakid)
             if (last_err[0]) ltext(12, 182, C_HOT, last_err);
             (void)cnt;
         }
+        audio_test_tick();
         lpresent();
         SDL_Delay(16);
     }
