@@ -1,0 +1,3 @@
+engine/android/app/build/
+engine/android/.gradle/
+*.o
