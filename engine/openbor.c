@@ -45479,11 +45479,13 @@ void inputrefresh(int playrecmode)
         static int net_seeded = 0;
         static u64 net_prev[MAX_PLAYERS];
         u64 net_in[MAX_PLAYERS] = {0, 0, 0, 0}, net_local;
+        unsigned long long net_ex[MAX_PLAYERS] = {0, 0, 0, 0};
         const u64 net_mask = (u64)(FLAG_CONTROLKEYS | FLAG_START);
         if(!net_seeded) { srand32(netplay.seed); srand((unsigned)netplay.seed); net_seeded = 1; }
         net_local = playercontrolpointers[0]->keyflags;
         if(net_local & FLAG_ESC) { netplay_shutdown(); borExit(0); }
-        if(!netplay_exchange(net_local & net_mask, net_in)) { netplay_shutdown(); borExit(0); }
+        if(!netplay_exchange((unsigned long long)(net_local & net_mask), net_ex)) { netplay_shutdown(); borExit(0); }
+        for(p = 0; p < MAX_PLAYERS; p++) net_in[p] = (u64)net_ex[p];
         for(p = 0; p < MAX_PLAYERS; p++)
         {
             playercontrolpointers[p]->keyflags = net_in[p];
