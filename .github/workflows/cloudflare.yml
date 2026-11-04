@@ -20,7 +20,10 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       - name: Show the address players use
-        working-directory: cloudflare
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
-          URL=$(grep -o 'https://[a-zA-Z0-9.-]*workers.dev' deploy.log | head -1)
-          echo "Relay address: ${URL/https:/wss:}/ws" | tee -a "$GITHUB_STEP_SUMMARY"
+          SUB=$(curl -s -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/subdomain" | python3 -c 'import sys,json; print((json.load(sys.stdin).get("result") or {}).get("subdomain",""))')
+          if [ -n "$SUB" ]; then echo "Relay address: wss://openbor-online-relay.$SUB.workers.dev/ws" | tee -a "$GITHUB_STEP_SUMMARY"
+          else echo "Relay deployed. Find its address in Cloudflare: Workers & Pages > openbor-online-relay > Settings > Domains & Routes, then use wss://THAT-HOST/ws" | tee -a "$GITHUB_STEP_SUMMARY"; fi
