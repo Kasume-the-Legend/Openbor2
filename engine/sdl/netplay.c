@@ -431,8 +431,55 @@ static void handle_line(char *line)
 #define LW 320
 #define LH 200
 static SDL_Window *lwin = NULL; static SDL_Surface *lsurf = NULL;
-static int l_engine_win = 0;   /* 1 = drawing through the game's own window (always the case on Android, which allows one window) */
-int video_lobby_available(void); int video_lobby_present(SDL_Surface *s); int video_lobby_map(int x, int y, int sw, int sh, int *lx, int *ly); void video_lobby_release(void);
+static int l_engine_win = 0;   /* 1 = drawing through the game's own window (always on Android: one window only, and it is an OpenGL window) */
+
+/* The game's window and renderer (sdl/video.c, or android/app/jni/openbor/video.c). */
+extern SDL_Window *window; extern SDL_Renderer *renderer;
+static SDL_Texture *lobby_tex = NULL; static SDL_Renderer *lobby_tex_r = NULL; static SDL_Rect lobby_dst;
+
+static int video_lobby_available(void) { return window != NULL && renderer != NULL; }
+
+static int video_lobby_present(SDL_Surface *s)
+{
+    int ow = 0, oh = 0, dw, dh;
+    if (!video_lobby_available() || !s) return 0;
+    if (lobby_tex && lobby_tex_r != renderer) lobby_tex = NULL;          /* went away with the old renderer */
+    if (!lobby_tex)
+    {
+        lobby_tex = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, s->w, s->h);
+        lobby_tex_r = renderer;
+        if (!lobby_tex) return 0;
+    }
+    SDL_UpdateTexture(lobby_tex, NULL, s->pixels, s->pitch);
+    SDL_GetRendererOutputSize(renderer, &ow, &oh);
+    if (ow <= 0 || oh <= 0) return 0;
+    dw = ow; dh = ow * s->h / s->w;
+    if (dh > oh) { dh = oh; dw = oh * s->w / s->h; }
+    lobby_dst.x = (ow - dw) / 2; lobby_dst.y = (oh - dh) / 2; lobby_dst.w = dw; lobby_dst.h = dh;
+    SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+    SDL_RenderClear(renderer);
+    SDL_RenderCopy(renderer, lobby_tex, NULL, &lobby_dst);
+    SDL_RenderPresent(renderer);
+    return 1;
+}
+
+/* window coordinates (mouse / touch) -> lobby coordinates; 0 if the tap is outside the picture */
+static int video_lobby_map(int x, int y, int sw, int sh, int *lx, int *ly)
+{
+    int ww = 0, wh = 0, ow = 0, oh = 0, px, py;
+    if (!window || !renderer || lobby_dst.w <= 0) return 0;
+    SDL_GetWindowSize(window, &ww, &wh); SDL_GetRendererOutputSize(renderer, &ow, &oh);
+    if (ww <= 0 || wh <= 0) return 0;
+    px = x * ow / ww; py = y * oh / wh;
+    *lx = (px - lobby_dst.x) * sw / lobby_dst.w; *ly = (py - lobby_dst.y) * sh / lobby_dst.h;
+    return *lx >= 0 && *ly >= 0 && *lx < sw && *ly < sh;
+}
+
+static void video_lobby_release(void)
+{
+    if (lobby_tex) { SDL_DestroyTexture(lobby_tex); lobby_tex = NULL; }
+    lobby_dst.w = 0;
+}
 static void lrect(int x, int y, int w, int h, unsigned col)
 {
     SDL_Rect r; r.x = x; r.y = y; r.w = w; r.h = h; SDL_FillRect(lsurf, &r, col);

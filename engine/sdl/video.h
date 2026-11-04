@@ -25,10 +25,6 @@ void FramerateDelay();
 // Frees all VESA shit when returning to textmode
 int video_set_mode(s_videomodes);
 int video_copy_screen(s_screen*);
-int video_lobby_available(void);
-int video_lobby_present(SDL_Surface*);
-int video_lobby_map(int, int, int, int, int*, int*);
-void video_lobby_release(void);
 void video_clearscreen();
 void video_fullscreen_flip();
 void video_stretch(int);
