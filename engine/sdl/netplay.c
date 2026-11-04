@@ -431,6 +431,8 @@ static void handle_line(char *line)
 #define LW 320
 #define LH 200
 static SDL_Window *lwin = NULL; static SDL_Surface *lsurf = NULL;
+static int l_engine_win = 0;   /* 1 = drawing through the game's own window (always the case on Android, which allows one window) */
+int video_lobby_available(void); int video_lobby_present(SDL_Surface *s); int video_lobby_map(int x, int y, int sw, int sh, int *lx, int *ly); void video_lobby_release(void);
 static void lrect(int x, int y, int w, int h, unsigned col)
 {
     SDL_Rect r; r.x = x; r.y = y; r.w = w; r.h = h; SDL_FillRect(lsurf, &r, col);
@@ -450,7 +452,9 @@ static void ltext(int x, int y, unsigned col, const char *s)
 }
 static void lpresent(void)
 {
-    SDL_Surface *ws = SDL_GetWindowSurface(lwin);
+    SDL_Surface *ws;
+    if (l_engine_win) { video_lobby_present(lsurf); return; }
+    ws = SDL_GetWindowSurface(lwin);
     if (ws) { SDL_BlitScaled(lsurf, NULL, ws, NULL); SDL_UpdateWindowSurface(lwin); }
 }
 #define C_BG 0x0c1020u
@@ -463,6 +467,14 @@ static void lpresent(void)
 static int lobby_open(void)
 {
     if (!SDL_WasInit(SDL_INIT_VIDEO)) SDL_InitSubSystem(SDL_INIT_VIDEO);
+    l_engine_win = video_lobby_available();
+    if (l_engine_win)
+    {
+        lsurf = SDL_CreateRGBSurfaceWithFormat(0, LW, LH, 32, SDL_PIXELFORMAT_ARGB8888);
+        if (!lsurf) return 0;
+        SDL_StartTextInput();
+        return 1;
+    }
     lwin = SDL_CreateWindow("OpenBOR Online", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, LW * 3, LH * 3, SDL_WINDOW_SHOWN);
     if (!lwin) return 0;
     lsurf = SDL_CreateRGBSurfaceWithFormat(0, LW, LH, 32, SDL_PIXELFORMAT_ARGB8888);
@@ -474,6 +486,7 @@ static void lobby_close(void)
 {
     SDL_StopTextInput();
     if (lsurf) { SDL_FreeSurface(lsurf); lsurf = NULL; }
+    if (l_engine_win) { video_lobby_release(); l_engine_win = 0; }
     if (lwin) { SDL_DestroyWindow(lwin); lwin = NULL; }
 }
 
@@ -519,8 +532,9 @@ int netplay_lobby(const char *pakid)
             }
             if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT)
             {   /* touch / mouse: turn a tap into the same key the keyboard would send */
-                int ww = LW, wh = LH, tx, ty, vk = 0; SDL_GetWindowSize(lwin, &ww, &wh);
-                tx = e.button.x * LW / (ww > 0 ? ww : LW); ty = e.button.y * LH / (wh > 0 ? wh : LH);
+                int ww = LW, wh = LH, tx, ty, vk = 0;
+                if (l_engine_win) { if (!video_lobby_map(e.button.x, e.button.y, LW, LH, &tx, &ty)) { tx = ty = -100; } }
+                else { SDL_GetWindowSize(lwin, &ww, &wh); tx = e.button.x * LW / (ww > 0 ? ww : LW); ty = e.button.y * LH / (wh > 0 ? wh : LH); }
                 if (scr == S_MENU) { for (i = 0; i < 6; i++) if (ty >= 42 + i * 16 && ty < 42 + i * 16 + 15) { sel = i; vk = SDLK_RETURN; } }
                 else if (scr == S_CODE)
                 {
