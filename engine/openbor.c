@@ -48348,12 +48348,9 @@ void playgame(int *players,  unsigned which_set, int useSavedGame)
             {
                 memset(save->selectSkipSelect,0,sizeof(save->selectSkipSelect)); // RESET skipselect
                 set->noselect = 0;
-                for(i = 0; i < set->maxplayers; i++) // reset skipselect
-                {
-                    if(le->skipselect[i])
-                    {
-                        skipselect[i][0] = 0;
-                    }
+                for(i = 0; i < MAX_PLAYERS; i++) // reset skipselect for everybody: once a real select screen has run, a player who dies and
+                {                                // continues mid-level picks a character from the top of the screen instead of being auto-assigned
+                    skipselect[i][0] = 0;
                 }
                 for(i = 0; i < set->maxplayers ; i++)
                 {
