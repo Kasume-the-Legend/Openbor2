@@ -180,6 +180,7 @@ public class LauncherActivity extends Activity {
 private void startGameActivity() {
     Log.d(TAG, "Attempting to start GameActivity..."); // <--- ADD THIS
     Toast.makeText(this, "Starting OpenBOR!", Toast.LENGTH_SHORT).show();
+    StoryUpdater.updateBlocking(this, 6000); // fresh Turtle Mania dialogue; silently skipped when offline
     Intent gameIntent = new Intent(this, GameActivity.class); // Assuming GameActivity is your game's main activity
     startActivity(gameIntent);
     finish(); // Optional: close LauncherActivity if it's no longer needed
