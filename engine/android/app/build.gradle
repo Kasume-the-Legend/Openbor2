@@ -9,9 +9,9 @@ android {
         //////////// MODFY FOR CUSTOM APK /////////////////
         applicationId "org.openbor.engine"
         namespace "org.openbor.engine"
-        versionCode 1
-        versionName "1.0.0"
-        resValue "string", "app_name", "Openbor"
+        versionCode 2
+        versionName "1.1.0"
+        resValue "string", "app_name", "TMNT Last Ronin"
         ///////////////////////////////////////////////////
 
         externalNativeBuild {

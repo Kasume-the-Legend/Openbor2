@@ -55,7 +55,8 @@ public class StoryUpdater {
         Iterator<String> it = files.keys();
         while (it.hasNext()) {
             String rel = it.next();
-            if (!rel.startsWith("data/cutscenes/tm/pools/") || rel.contains("..") || !rel.endsWith(".txt")) continue;
+            if (!rel.matches("data/cutscenes/tm/pools/[A-Za-z0-9_]+\\.txt")) continue;
+            if (!validPool(files.getString(rel))) { Log.w(TAG, "rejected malformed pool " + rel); continue; }
             File dst = new File(root, rel);
             File dir = dst.getParentFile();
             if (dir != null && !dir.exists() && !dir.mkdirs()) continue;
@@ -66,6 +67,25 @@ public class StoryUpdater {
         FileOutputStream vo = new FileOutputStream(vfile);
         try { vo.write(String.valueOf(pack.optLong("version", since)).getBytes("UTF-8")); } finally { vo.close(); }
         Log.d(TAG, "Turtle Mania story updated: " + n + " pools");
+    }
+
+    /** A pool is "<count>\n" then exactly that many lines "say <face> <NAME> <row1> <row2> <row3>", rows of at most 29 characters. */
+    static boolean validPool(String body) {
+        if (body == null) return false;
+        String[] ln = body.split("\n");
+        int n;
+        try { n = Integer.parseInt(ln[0].trim()); } catch (Exception e) { return false; }
+        if (n < 1) return false;
+        int seen = 0;
+        for (int i = 1; i < ln.length; i++) {
+            String l = ln[i].replace("\r", "");
+            if (l.trim().length() == 0) continue;
+            String[] t = l.split(" ", -1);
+            if (t.length != 6 || !t[0].equals("say") || t[1].length() == 0 || t[2].length() == 0) return false;
+            for (int k = 3; k < 6; k++) if (t[k].length() == 0 || t[k].length() > 29) return false;
+            seen++;
+        }
+        return seen == n;
     }
 
     private static byte[] readAll(InputStream in) throws Exception {

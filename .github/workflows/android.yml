@@ -3,6 +3,8 @@ on:
   workflow_dispatch:
   push:
     branches: [ main, master ]
+permissions:
+  contents: write
 jobs:
   build:
     runs-on: ubuntu-22.04
@@ -23,3 +25,12 @@ jobs:
         with:
           name: OpenBOR-Online-APK
           path: engine/android/app/build/outputs/apk/debug/*.apk
+
+      - name: Publish the shell APK as a release asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          APK=$(ls engine/android/app/build/outputs/apk/debug/*.apk | head -1)
+          cp "$APK" OpenBOR-shell.apk
+          gh release delete android-latest --yes --cleanup-tag || true
+          gh release create android-latest OpenBOR-shell.apk --title "Android shell (latest)" --notes "Latest Android build without a game baked in. The game is injected into this APK separately." --target "${{ github.sha }}"

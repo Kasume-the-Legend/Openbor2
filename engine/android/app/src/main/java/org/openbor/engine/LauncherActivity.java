@@ -6,6 +6,8 @@ import android.net.Uri;
 import android.os.Bundle;
 import android.os.Environment;
 import android.util.Log;
+import android.view.Gravity;
+import android.widget.TextView;
 import android.widget.Toast;
 
 import java.io.File;
@@ -30,8 +32,172 @@ public class LauncherActivity extends Activity {
         // Set your layout if you have one, or keep it simple for testing
         // setContentView(R.layout.activity_launcher);
 
-        // Immediately try to show the file picker when the activity is created
+        // A game baked into the APK (assets/bor.pak) installs itself; otherwise ask for a .pak like before.
+        if (hasBakedPak()) {
+            installBakedAndStart();
+            return;
+        }
         showPakSelectionDialog();
+    }
+
+    // ---------------------------------------------------------------- baked game
+    // assets/bor.pak  = the game; assets/bor.info = line 1: pak file name, line 2: build id, line 3: size in bytes.
+    private boolean hasBakedPak() {
+        try {
+            InputStream in = getAssets().open("bor.pak");
+            in.close();
+            return true;
+        } catch (IOException e) {
+            return false;
+        }
+    }
+
+    private String[] readBakedInfo() {
+        String[] info = {"TMNT_Last_Ronin_DC_SS.pak", "1", "0"};
+        try {
+            InputStream in = getAssets().open("bor.info");
+            java.io.ByteArrayOutputStream bo = new java.io.ByteArrayOutputStream();
+            byte[] b = new byte[512];
+            int r;
+            while ((r = in.read(b)) > 0) bo.write(b, 0, r);
+            in.close();
+            String[] ln = new String(bo.toByteArray(), "UTF-8").split("\\r?\\n");
+            for (int i = 0; i < 3 && i < ln.length; i++) {
+                if (ln[i].trim().length() > 0) info[i] = ln[i].trim();
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "no bor.info, using defaults: " + e);
+        }
+        if (info[0].contains("/") || info[0].contains("\\") || !info[0].toLowerCase().endsWith(".pak")) {
+            info[0] = "TMNT_Last_Ronin_DC_SS.pak";
+        }
+        return info;
+    }
+
+    private void installBakedAndStart() {
+        final TextView tv = new TextView(this);
+        tv.setText("Turtle Mania\n\nChecking game data...");
+        tv.setGravity(Gravity.CENTER);
+        tv.setTextColor(0xFFFFFFFF);
+        tv.setTextSize(22);
+        tv.setBackgroundColor(0xFF000000);
+        setContentView(tv);
+        new Thread(new Runnable() {
+            @Override public void run() {
+                try {
+                    installBaked(tv);
+                    runOnUiThread(new Runnable() { @Override public void run() { startGameActivity(); } });
+                } catch (final Throwable t) {
+                    Log.e(TAG, "baked install failed", t);
+                    runOnUiThread(new Runnable() {
+                        @Override public void run() {
+                            Toast.makeText(LauncherActivity.this, "Could not install the game: " + t.getMessage(), Toast.LENGTH_LONG).show();
+                            showPakSelectionDialog();
+                        }
+                    });
+                }
+            }
+        }).start();
+    }
+
+    private void setStatus(final TextView tv, final String text) {
+        runOnUiThread(new Runnable() { @Override public void run() { tv.setText(text); } });
+    }
+
+    private static byte[] readSmall(File f) {
+        try {
+            InputStream in = new java.io.FileInputStream(f);
+            java.io.ByteArrayOutputStream bo = new java.io.ByteArrayOutputStream();
+            byte[] b = new byte[256];
+            int r;
+            while ((r = in.read(b)) > 0) bo.write(b, 0, r);
+            in.close();
+            return bo.toByteArray();
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private static void deleteTree(File f) {
+        if (f == null || !f.exists()) return;
+        File[] kids = f.listFiles();
+        if (kids != null) for (File k : kids) deleteTree(k);
+        f.delete();
+    }
+
+    private void installBaked(TextView tv) throws IOException {
+        String[] info = readBakedInfo();
+        String name = info[0];
+        String build = info[1];
+        long size = 0;
+        try { size = Long.parseLong(info[2]); } catch (Exception ignored) { }
+
+        File root = getExternalFilesDir(null);
+        if (root == null) throw new IOException("storage not available");
+        File paks = new File(root, DEST_SUB_FOLDER_NAME);
+        if (!paks.exists() && !paks.mkdirs()) throw new IOException("cannot create " + paks);
+        File dest = new File(paks, name);
+        File marker = new File(root, "baked_build.txt");
+
+        byte[] have = readSmall(marker);
+        boolean current = have != null && new String(have, "UTF-8").trim().equals(build)
+                && dest.exists() && (size <= 0 || dest.length() == size);
+        if (current) {
+            Log.d(TAG, "baked game already installed: " + build);
+            return;
+        }
+
+        long need = size > 0 ? size : 450L * 1024 * 1024;
+        long freeNeeded = need + 64L * 1024 * 1024 - (dest.exists() ? dest.length() : 0);
+        if (root.getUsableSpace() < freeNeeded) {
+            throw new IOException("need about " + (freeNeeded / (1024 * 1024)) + " MB free storage");
+        }
+
+        // earlier copies of this game would show up in the pak menu next to the new one
+        File[] old = paks.listFiles();
+        if (old != null) {
+            for (File f : old) {
+                String n = f.getName();
+                if (!n.equals(name) && n.startsWith("TMNT_Last_Ronin_DC_SS") && n.toLowerCase().endsWith(".pak")) f.delete();
+            }
+        }
+        File tmp = new File(paks, name + ".tmp");
+        if (tmp.exists()) tmp.delete();
+        InputStream in = getAssets().open("bor.pak", android.content.res.AssetManager.ACCESS_STREAMING);
+        OutputStream out = new FileOutputStream(tmp);
+        try {
+            byte[] buf = new byte[1 << 20];
+            long done = 0;
+            int lastPct = -1;
+            int r;
+            while ((r = in.read(buf)) > 0) {
+                out.write(buf, 0, r);
+                done += r;
+                int pct = size > 0 ? (int) (done * 100 / size) : (int) (done / (4L * 1024 * 1024));
+                if (pct != lastPct && (pct % 2 == 0)) {
+                    lastPct = pct;
+                    setStatus(tv, "Turtle Mania\n\nInstalling game data" + (size > 0 ? " " + pct + "%" : "...") + "\nFirst launch and updates only");
+                }
+            }
+            out.flush();
+        } finally {
+            try { in.close(); } catch (IOException ignored) { }
+            try { out.close(); } catch (IOException ignored) { }
+        }
+        if (size > 0 && tmp.length() != size) {
+            tmp.delete();
+            throw new IOException("copy incomplete");
+        }
+        if (dest.exists() && !dest.delete()) throw new IOException("cannot replace old game file");
+        if (!tmp.renameTo(dest)) throw new IOException("cannot finish install");
+
+        // loose story files from an older build or download would override the new ones inside the pak
+        deleteTree(new File(root, "data/cutscenes"));
+        new File(root, "tm_story_version.txt").delete();
+
+        FileOutputStream mo = new FileOutputStream(marker);
+        try { mo.write(build.getBytes("UTF-8")); } finally { mo.close(); }
+        Log.d(TAG, "baked game installed: " + build);
     }
 
     private void showPakSelectionDialog() {
