@@ -262,7 +262,11 @@ void FramerateDelay()
     u64 current_time = timer_uticks();
     while (current_time < target_time)
     {
+#ifdef WIN
+        if (target_time - current_time > 2000) usleep(target_time - current_time - 2000); // spin the last 2 ms: Windows sleeps are coarse
+#else
         usleep(target_time - current_time);
+#endif
         current_time = timer_uticks();
     }
     last_time = current_time;

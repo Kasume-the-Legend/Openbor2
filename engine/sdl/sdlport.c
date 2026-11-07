@@ -6,6 +6,9 @@
  * Copyright (c)  OpenBOR Team
  */
 
+#ifdef WIN
+extern unsigned int __stdcall timeBeginPeriod(unsigned int uPeriod); /* winmm, declared here to avoid windows.h type clashes */
+#endif
 #include "sdlport.h"
 #include "packfile.h"
 #include "ram.h"
@@ -69,6 +72,9 @@ void borExit(int reset)
 
 int main(int argc, char *argv[])
 {
+#ifdef WIN
+	timeBeginPeriod(1); // 1 ms timer resolution so sleeps and frame waits are accurate
+#endif
 #ifndef SKIP_CODE
 	char pakname[MAX_FILENAME_LEN] = {""};
 #endif

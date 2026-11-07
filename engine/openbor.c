@@ -45991,7 +45991,12 @@ void update(int ingame, int usevwait)
         u64 current_time = timer_uticks();
         while (current_time < target_time)
         {
+#ifdef WIN
+            // Windows sleeps are coarse (about 15 ms): sleep only while far away, then spin, so inputs are read on time
+            if (target_time - current_time > 3000) usleep(target_time - current_time - 3000);
+#else
             usleep(target_time - current_time);
+#endif
             current_time = timer_uticks();
         }
     }
