@@ -6,6 +6,7 @@
  * Copyright (c)  OpenBOR Team
  */
 
+#include <stdio.h>
 #include <png.h>
 #include "types.h"
 #include "screen.h"
@@ -24,6 +25,13 @@ void png_set_expand_gray_1_2_4_to_8(png_structp png_ptr)
 
 static void png_warning_fn(png_structp png_ptr, png_const_charp warning_msg)
 {
+    printf("png warning: %s\n", warning_msg ? warning_msg : "?");
+}
+
+static void png_error_fn(png_structp png_ptr, png_const_charp error_msg)
+{
+    printf("png error: %s\n", error_msg ? error_msg : "?");
+    png_longjmp(png_ptr, 1);
 }
 
 static void png_read_fn(png_structp pngp, png_bytep outp, png_size_t size)
@@ -48,7 +56,7 @@ s_screen *pngToScreen(const void *data)
     {
         goto error;
     }
-    png_set_error_fn(png_ptr, (png_voidp) NULL, (png_error_ptr) NULL, png_warning_fn);
+    png_set_error_fn(png_ptr, (png_voidp) NULL, png_error_fn, png_warning_fn);
     info_ptr = png_create_info_struct(png_ptr);
     if(info_ptr == NULL)
     {
