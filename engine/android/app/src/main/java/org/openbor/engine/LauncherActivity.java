@@ -38,11 +38,7 @@ public class LauncherActivity extends Activity {
             installBakedAndStart();
             return;
         }
-        if (hasInstalledPak()) {
-            startGameActivity();
-            return;
-        }
-        showPakSelectionDialog();
+        showHome(null);
     }
 
     // ---------------------------------------------------------------- baked game
@@ -250,8 +246,7 @@ public class LauncherActivity extends Activity {
         } catch (Exception e) {
             Log.e(TAG, "Could not launch file picker: " + e.getMessage(), e);
             Toast.makeText(this, "Error opening file picker. Please ensure a file manager is installed.", Toast.LENGTH_LONG).show();
-            // Decide what to do if the picker cannot be launched (e.g., finish activity or retry)
-            finish(); // For this simple example, we'll just exit
+            showHome("Could not open the file picker.");
         }
     }
 
@@ -278,27 +273,16 @@ public class LauncherActivity extends Activity {
                         }
                     }
 
-                    File destinationFile = new File(destinationRootFolder, fileName);
-
-                    // Check if the file already exists in the destination
-                    if (destinationFile.exists()) {
-                        Log.d(TAG, "File " + fileName + " already exists in Paks folder. Launching game.");
-                        Toast.makeText(this, fileName + " already in game folder. Starting game.", Toast.LENGTH_LONG).show();
-                        startGameActivity();
-                    } else {
-                        Log.d(TAG, "Selected file: " + fileName + " is a .pak file and needs to be copied. Copying...");
-                        copySelectedPakFile(uri, fileName);
-                    }
+                    copySelectedPakFile(uri, fileName);
                 } else {
                     Log.w(TAG, "Selected file is not a .pak file: " + (fileName != null ? fileName : "Unknown"));
-                    Toast.makeText(this, "Please select a file with the .pak extension.", Toast.LENGTH_LONG).show();
-                    showPakSelectionDialog(); // Prompt user again
+                    showHome("That file is not a .pak file. Choose the game file (ends in .pak).");
                 }
             } else if (resultCode == Activity.RESULT_CANCELED) {
                 Log.d(TAG, "File selection cancelled by user.");
                 Toast.makeText(this, "File selection cancelled.", Toast.LENGTH_SHORT).show();
                 // Back from the picker: go to the engine's pak menu if a game is already installed, otherwise leave
-                if (hasInstalledPak()) startGameActivity(); else finish();
+                showHome(null);
             } else {
                 Log.e(TAG, "Unknown result from file picker: resultCode=" + resultCode);
                 Toast.makeText(this, "An error occurred during file selection.", Toast.LENGTH_LONG).show();
@@ -358,14 +342,49 @@ public class LauncherActivity extends Activity {
                     tmp.delete();
                     final String msg = error;
                     runOnUiThread(new Runnable() { @Override public void run() {
-                        Toast.makeText(LauncherActivity.this, "Could not copy the game: " + msg, Toast.LENGTH_LONG).show();
-                        showPakSelectionDialog();
+                        showHome("Could not copy the game: " + msg);
                     } });
                 } else {
-                    runOnUiThread(new Runnable() { @Override public void run() { startGameActivity(); } });
+                    final long len = dest.length();
+                    runOnUiThread(new Runnable() { @Override public void run() {
+                        showHome("Game copied to the games folder (" + (len / (1024 * 1024)) + " MB). Tap Start game.");
+                    } });
                 }
             }
         }).start();
+    }
+
+    private void showHome(String message) {
+        android.widget.LinearLayout box = new android.widget.LinearLayout(this);
+        box.setOrientation(android.widget.LinearLayout.VERTICAL);
+        box.setGravity(Gravity.CENTER);
+        box.setPadding(48, 48, 48, 48);
+        box.setBackgroundColor(0xFF000000);
+        TextView tv = new TextView(this);
+        tv.setGravity(Gravity.CENTER);
+        tv.setTextColor(0xFFFFFFFF);
+        tv.setTextSize(18);
+        boolean have = hasInstalledPak();
+        StringBuilder sb = new StringBuilder("OpenBOR\n\n");
+        if (message != null) sb.append(message).append("\n\n");
+        sb.append(have ? "A game is installed." : "No game installed yet. Choose your .pak file.");
+        tv.setText(sb.toString());
+        box.addView(tv);
+        if (have) {
+            android.widget.Button start = new android.widget.Button(this);
+            start.setText("Start game");
+            start.setOnClickListener(new android.view.View.OnClickListener() {
+                @Override public void onClick(android.view.View v) { startGameActivity(); }
+            });
+            box.addView(start);
+        }
+        android.widget.Button pick = new android.widget.Button(this);
+        pick.setText(have ? "Choose or replace game file (.pak)" : "Choose game file (.pak)");
+        pick.setOnClickListener(new android.view.View.OnClickListener() {
+            @Override public void onClick(android.view.View v) { showPakSelectionDialog(); }
+        });
+        box.addView(pick);
+        setContentView(box);
     }
 
     // Copies the engine log from the last run to Downloads/TMNT_OpenBorLog.txt so it can be sent for debugging.
@@ -431,7 +450,7 @@ private void startGameActivity() {
         //     })
         //     .setCancelable(false) // User must choose an option
         //     .show();
-        showPakSelectionDialog(); // For this example, just re-prompt directly
+        showHome(message);
     }
 
     // Helper method to get the file name from a content URI
