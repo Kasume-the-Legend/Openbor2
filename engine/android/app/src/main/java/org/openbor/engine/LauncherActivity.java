@@ -32,6 +32,7 @@ public class LauncherActivity extends Activity {
         // Set your layout if you have one, or keep it simple for testing
         // setContentView(R.layout.activity_launcher);
 
+        exportLogAsync();
         // A game baked into the APK (assets/bor.pak) installs itself; otherwise ask for a .pak like before.
         if (hasBakedPak()) {
             installBakedAndStart();
@@ -306,51 +307,96 @@ public class LauncherActivity extends Activity {
         }
     }
 
-    private void copySelectedPakFile(Uri pakFileUri, String fileName) {
-        File destinationRootFolder = new File(getExternalFilesDir(null), DEST_SUB_FOLDER_NAME);
-        File destinationFile = new File(destinationRootFolder, fileName);
-
-        InputStream in = null;
-        OutputStream out = null;
-        try {
-            // !!! Crucial for ACTION_OPEN_DOCUMENT URIs !!!
-            // Grants your app persistent read access to the selected URI.
-            // This is the direct solution to the SecurityException you encountered earlier.
-            final int takeFlags = Intent.FLAG_GRANT_READ_URI_PERMISSION;
-            getContentResolver().takePersistableUriPermission(pakFileUri, takeFlags);
-
-            in = getContentResolver().openInputStream(pakFileUri);
-            if (in == null) {
-                throw new IOException("Failed to open input stream for URI: " + pakFileUri.toString());
-            }
-            out = new FileOutputStream(destinationFile);
-            copyFile(in, out); // Your utility copy method
-            Toast.makeText(this, "Copied " + fileName + " to game data folder!", Toast.LENGTH_LONG).show();
-            Log.d(TAG, "Successfully copied: " + fileName + " to " + destinationFile.getAbsolutePath());
-            startGameActivity(); // Launch the game after successful copy
-        } catch (IOException e) {
-            Log.e(TAG, "Failed to copy selected .pak file: " + fileName, e);
-            Toast.makeText(this, "Error copying " + fileName + ". Please try again.", Toast.LENGTH_LONG).show();
-            // Clean up partially copied file
-            if (destinationFile.exists() && !destinationFile.delete()) {
-                Log.w(TAG, "Could not delete partially copied file: " + destinationFile.getAbsolutePath());
-            }
-            showErrorAndRetryDialog("Failed to copy " + fileName + ". Would you like to try again?");
-        } catch (SecurityException e) {
-            Log.e(TAG, "SecurityException while copying file: " + e.getMessage(), e);
-            Toast.makeText(this, "Permission denied to read selected file. Please ensure app has storage access if prompted, or choose an accessible file.", Toast.LENGTH_LONG).show();
-            showErrorAndRetryDialog("Permission denied. Select another file?");
-        } finally {
-            try {
-                if (in != null) in.close();
-                if (out != null) {
-                    out.flush(); // Ensure all buffered data is written
-                    out.close();
+    private void copySelectedPakFile(final Uri pakFileUri, final String fileName) {
+        final TextView tv = new TextView(this);
+        tv.setText("Copying " + fileName + "...\nPlease wait");
+        tv.setGravity(Gravity.CENTER);
+        tv.setTextColor(0xFFFFFFFF);
+        tv.setTextSize(20);
+        tv.setBackgroundColor(0xFF000000);
+        setContentView(tv);
+        new Thread(new Runnable() {
+            @Override public void run() {
+                File root = new File(getExternalFilesDir(null), DEST_SUB_FOLDER_NAME);
+                File dest = new File(root, fileName);
+                File tmp = new File(root, fileName + ".tmp");
+                InputStream in = null;
+                OutputStream out = null;
+                String error = null;
+                try {
+                    try {
+                        getContentResolver().takePersistableUriPermission(pakFileUri, Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                    } catch (Throwable ignored) { /* not every provider allows it, and we do not need it */ }
+                    in = getContentResolver().openInputStream(pakFileUri);
+                    if (in == null) throw new IOException("could not open the selected file");
+                    out = new FileOutputStream(tmp);
+                    byte[] buf = new byte[1 << 20];
+                    long done = 0;
+                    long lastShown = 0;
+                    int r;
+                    while ((r = in.read(buf)) > 0) {
+                        out.write(buf, 0, r);
+                        done += r;
+                        if (done - lastShown > 16L * 1024 * 1024) {
+                            lastShown = done;
+                            setStatus(tv, "Copying " + fileName + "\n" + (done / (1024 * 1024)) + " MB");
+                        }
+                    }
+                    out.flush();
+                } catch (Throwable t) {
+                    Log.e(TAG, "pak copy failed", t);
+                    error = String.valueOf(t.getMessage());
+                } finally {
+                    try { if (in != null) in.close(); } catch (Throwable ignored) { }
+                    try { if (out != null) out.close(); } catch (Throwable ignored) { }
                 }
-            } catch (IOException e) {
-                Log.e(TAG, "Error closing streams for " + fileName + ": " + e.getMessage());
+                if (error == null) {
+                    if (dest.exists()) dest.delete();
+                    if (!tmp.renameTo(dest)) error = "could not finish copy";
+                }
+                if (error != null) {
+                    tmp.delete();
+                    final String msg = error;
+                    runOnUiThread(new Runnable() { @Override public void run() {
+                        Toast.makeText(LauncherActivity.this, "Could not copy the game: " + msg, Toast.LENGTH_LONG).show();
+                        showPakSelectionDialog();
+                    } });
+                } else {
+                    runOnUiThread(new Runnable() { @Override public void run() { startGameActivity(); } });
+                }
             }
-        }
+        }).start();
+    }
+
+    // Copies the engine log from the last run to Downloads/TMNT_OpenBorLog.txt so it can be sent for debugging.
+    private void exportLogAsync() {
+        new Thread(new Runnable() {
+            @Override public void run() {
+                try {
+                    File root = getExternalFilesDir(null);
+                    if (root == null) return;
+                    File log = new File(root, "Logs/OpenBorLog.txt");
+                    if (!log.exists() || log.length() == 0) return;
+                    if (android.os.Build.VERSION.SDK_INT >= 29) {
+                        android.content.ContentResolver cr = getContentResolver();
+                        android.net.Uri col = android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI;
+                        cr.delete(col, android.provider.MediaStore.MediaColumns.DISPLAY_NAME + "=? AND " + android.provider.MediaStore.MediaColumns.OWNER_PACKAGE_NAME + "=?",
+                                new String[]{"TMNT_OpenBorLog.txt", getPackageName()});
+                        android.content.ContentValues v = new android.content.ContentValues();
+                        v.put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, "TMNT_OpenBorLog.txt");
+                        v.put(android.provider.MediaStore.MediaColumns.MIME_TYPE, "text/plain");
+                        v.put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, "Download");
+                        android.net.Uri u = cr.insert(col, v);
+                        if (u == null) return;
+                        InputStream in = new java.io.FileInputStream(log);
+                        OutputStream out = cr.openOutputStream(u);
+                        try { copyFile(in, out); } finally { in.close(); if (out != null) out.close(); }
+                    }
+                } catch (Throwable t) {
+                    Log.w(TAG, "log export failed: " + t);
+                }
+            }
+        }).start();
     }
 
     // --- Utility Methods (Keep these as they were or adapt them) ---
