@@ -386,6 +386,7 @@ GAME_CONSOLE   += sdl/joysticks.o                                               
                   sdl/video.o                                                                       \
                   sdl/videocommon.o                                                                 \
 				  sdl/threads.o                                                                     \
+                  sdl/netplay.o \
                   sdl/menu.o
 endif
 
@@ -573,7 +574,7 @@ endif
 
 
 ifdef BUILD_WIN
-LIBS           += -lpsapi -lopengl32 -lwinmm -lole32 -loleaut32 -luuid -limm32 -lversion -mwindows
+LIBS           += -lpsapi -lopengl32 -lwinmm -lole32 -loleaut32 -luuid -limm32 -lversion -lsetupapi -lcfgmgr32 -lws2_32 -mwindows
 endif
 
 
