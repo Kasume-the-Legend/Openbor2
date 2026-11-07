@@ -7,7 +7,7 @@ android {
         targetSdkVersion 35
 
         //////////// MODFY FOR CUSTOM APK /////////////////
-        applicationId "org.openbor.engine"
+        applicationId "org.openbor.tmnt.lastronin"
         namespace "org.openbor.engine"
         versionCode 2
         versionName "1.1.0"
