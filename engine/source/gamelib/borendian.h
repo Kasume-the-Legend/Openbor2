@@ -25,7 +25,7 @@ typedef s16                 SInt16;
 typedef u16                 UInt16;
 typedef s32                 SInt32;
 typedef u32                 UInt32;
-#ifdef __x86_64__
+#if defined(__x86_64__) && !defined(_WIN32)
 typedef signed long         SInt64;
 typedef unsigned long       UInt64;
 #else
