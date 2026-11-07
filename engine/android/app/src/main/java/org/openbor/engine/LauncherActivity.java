@@ -367,7 +367,13 @@ public class LauncherActivity extends Activity {
         boolean have = hasInstalledPak();
         StringBuilder sb = new StringBuilder("OpenBOR\n\n");
         if (message != null) sb.append(message).append("\n\n");
-        sb.append(have ? "A game is installed." : "No game installed yet. Choose your .pak file.");
+        if (have) {
+            sb.append("Installed:");
+            File[] ps = new File(getExternalFilesDir(null), DEST_SUB_FOLDER_NAME).listFiles();
+            if (ps != null) for (File f : ps) if (f.getName().toLowerCase().endsWith(".pak")) sb.append("\n").append(f.getName()).append("  (").append(f.length() / (1024 * 1024)).append(" MB)");
+        } else {
+            sb.append("No game installed yet. Choose your .pak file.");
+        }
         tv.setText(sb.toString());
         box.addView(tv);
         if (have) {
@@ -384,6 +390,28 @@ public class LauncherActivity extends Activity {
             @Override public void onClick(android.view.View v) { showPakSelectionDialog(); }
         });
         box.addView(pick);
+        if (have) {
+            android.widget.Button del = new android.widget.Button(this);
+            del.setText("Remove installed games");
+            del.setOnClickListener(new android.view.View.OnClickListener() {
+                @Override public void onClick(android.view.View v) {
+                    new android.app.AlertDialog.Builder(LauncherActivity.this)
+                        .setTitle("Remove installed games?")
+                        .setMessage("This deletes the game file(s) from the app's games folder. Your saves are kept.")
+                        .setPositiveButton("Remove", new android.content.DialogInterface.OnClickListener() {
+                            @Override public void onClick(android.content.DialogInterface d, int w) {
+                                File[] ps2 = new File(getExternalFilesDir(null), DEST_SUB_FOLDER_NAME).listFiles();
+                                if (ps2 != null) for (File f : ps2) if (f.getName().toLowerCase().endsWith(".pak") || f.getName().endsWith(".tmp")) f.delete();
+                                new File(getExternalFilesDir(null), "baked_build.txt").delete();
+                                showHome("Games removed.");
+                            }
+                        })
+                        .setNegativeButton("Cancel", null)
+                        .show();
+                }
+            });
+            box.addView(del);
+        }
         setContentView(box);
     }
 
