@@ -433,6 +433,9 @@ OBJS            = $(MAIN)                                                       
 
 CFLAGS 	       += $(addprefix -I", $(addsuffix ", $(INCS))) $(ARCHFLAGS) -D$(TARGET_PLATFORM)
 CFLAGS 	       += -g -Wall -Werror -Wno-format-truncation -Wno-stringop-truncation -fsigned-char -std=gnu99
+ifdef BUILD_WIN
+CFLAGS         += -Wno-error
+endif
 
 
 ifndef BUILD_DARWIN
