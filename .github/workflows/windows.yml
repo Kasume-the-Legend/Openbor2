@@ -1,0 +1,57 @@
+name: Build Windows
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'engine/**'
+      - '.github/workflows/windows.yml'
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW32
+          update: true
+          install: >-
+            make
+            zip
+            mingw-w64-i686-toolchain
+            mingw-w64-i686-SDL2
+            mingw-w64-i686-libpng
+            mingw-w64-i686-libvorbis
+            mingw-w64-i686-libogg
+            mingw-w64-i686-libvpx
+            mingw-w64-i686-yasm
+            mingw-w64-i686-zlib
+      - name: Build OpenBOR.exe
+        working-directory: engine
+        run: |
+          set -o pipefail
+          windres resources/OpenBOR.rc -O coff -o resources/OpenBOR.res 2>&1 | tee ../build.log || true
+          make BUILD_WIN=1 WINDEV=/mingw32/bin PREFIX= EXTENSION=.exe SDKPATH=/mingw32 2>&1 | tee -a ../build.log
+          ls -l OpenBOR.exe | tee -a ../build.log
+      - name: Package
+        if: success()
+        run: |
+          mkdir -p pkg/OpenBOR/Paks pkg/OpenBOR/Saves pkg/OpenBOR/Logs pkg/OpenBOR/ScreenShots
+          cp engine/OpenBOR.exe pkg/OpenBOR/
+          cd pkg && zip -r ../OpenBOR-Windows.zip OpenBOR
+      - name: Publish release assets
+        if: always()
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete windows-latest --yes --cleanup-tag 2>$null
+          $files = @()
+          if (Test-Path build.log) { $files += "build.log" }
+          if (Test-Path OpenBOR-Windows.zip) { $files += "OpenBOR-Windows.zip" }
+          gh release create windows-latest @files --title "Windows build (latest)" --notes "OpenBOR 4.0 Windows build from this repo's engine" --target "${{ github.sha }}"
