@@ -18,25 +18,24 @@ jobs:
       - uses: actions/checkout@v4
       - uses: msys2/setup-msys2@v2
         with:
-          msystem: MINGW64
+          msystem: UCRT64
           update: true
           install: >-
             make
             zip
-            mingw-w64-x86_64-toolchain
-            mingw-w64-x86_64-SDL2
-            mingw-w64-x86_64-libpng
-            mingw-w64-x86_64-libvorbis
-            mingw-w64-x86_64-libogg
-            mingw-w64-x86_64-libvpx
-            mingw-w64-x86_64-yasm
-            mingw-w64-x86_64-zlib
+            mingw-w64-ucrt-x86_64-toolchain
+            mingw-w64-ucrt-x86_64-SDL2
+            mingw-w64-ucrt-x86_64-libpng
+            mingw-w64-ucrt-x86_64-libvorbis
+            mingw-w64-ucrt-x86_64-libogg
+            mingw-w64-ucrt-x86_64-libvpx
+            mingw-w64-ucrt-x86_64-zlib
       - name: Build OpenBOR.exe
         working-directory: engine
         run: |
           set -o pipefail
           windres resources/OpenBOR.rc -O coff -o resources/OpenBOR.res 2>&1 | tee ../build.log || true
-          make BUILD_WIN=1 WINDEV=/mingw64/bin PREFIX= EXTENSION=.exe SDKPATH=/mingw64 ARCHFLAGS=-m64 TARGET_ARCH=amd64 2>&1 | tee -a ../build.log
+          make BUILD_WIN=1 WINDEV=/ucrt64/bin PREFIX= EXTENSION=.exe SDKPATH=/ucrt64 ARCHFLAGS=-m64 TARGET_ARCH=amd64 2>&1 | tee -a ../build.log
           ls -l OpenBOR.exe | tee -a ../build.log
       - name: Package
         if: success()
