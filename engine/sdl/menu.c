@@ -736,7 +736,12 @@ void Menu()
 	loadsettings();
 	drawLogo();
 	dListCurrentPosition = 0;
+#if ANDROID
+	dListTotal = findPaks();
+	if(1) // always show the pak menu on Android, so quitting a game lands here instead of relaunching it
+#else
 	if((dListTotal = findPaks()) != 1)
+#endif
 	{
 		sortList();
 		getAllLogs();

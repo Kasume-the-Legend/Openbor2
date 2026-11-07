@@ -37,11 +37,24 @@ public class LauncherActivity extends Activity {
             installBakedAndStart();
             return;
         }
+        if (hasInstalledPak()) {
+            startGameActivity();
+            return;
+        }
         showPakSelectionDialog();
     }
 
     // ---------------------------------------------------------------- baked game
     // assets/bor.pak  = the game; assets/bor.info = line 1: pak file name, line 2: build id, line 3: size in bytes.
+    private boolean hasInstalledPak() {
+        File root = getExternalFilesDir(null);
+        if (root == null) return false;
+        String[] n = new File(root, DEST_SUB_FOLDER_NAME).list();
+        if (n == null) return false;
+        for (String f : n) if (f.toLowerCase().endsWith(".pak")) return true;
+        return false;
+    }
+
     private boolean hasBakedPak() {
         try {
             InputStream in = getAssets().open("bor.pak");
@@ -283,8 +296,8 @@ public class LauncherActivity extends Activity {
             } else if (resultCode == Activity.RESULT_CANCELED) {
                 Log.d(TAG, "File selection cancelled by user.");
                 Toast.makeText(this, "File selection cancelled.", Toast.LENGTH_SHORT).show();
-                // If user cancels, we might want to prompt again or exit
-                startGameActivity(); // Continue to start engine
+                // Back from the picker: go to the engine's pak menu if a game is already installed, otherwise leave
+                if (hasInstalledPak()) startGameActivity(); else finish();
             } else {
                 Log.e(TAG, "Unknown result from file picker: resultCode=" + resultCode);
                 Toast.makeText(this, "An error occurred during file selection.", Toast.LENGTH_LONG).show();
