@@ -497,12 +497,30 @@ static void ltext(int x, int y, unsigned col, const char *s)
                 if ((g[y1] >> x1) & 1) { int X = x + x1, Y = y + y1; if (X >= 0 && X < LW && Y >= 0 && Y < LH) px[Y * pitch + X] = col; }
     }
 }
+static SDL_Renderer *lrend = NULL; static SDL_Texture *ltex = NULL;
 static void lpresent(void)
 {
-    SDL_Surface *ws;
     if (l_engine_win) { video_lobby_present(lsurf); return; }
-    ws = SDL_GetWindowSurface(lwin);
-    if (ws) { SDL_BlitScaled(lsurf, NULL, ws, NULL); SDL_UpdateWindowSurface(lwin); }
+    if (!lrend)
+    {
+        lrend = SDL_CreateRenderer(lwin, -1, 0);
+        if (!lrend) lrend = SDL_CreateRenderer(lwin, -1, SDL_RENDERER_SOFTWARE);
+        if (lrend) ltex = SDL_CreateTexture(lrend, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, LW, LH);
+        if (!lrend || !ltex) fprintf(stderr, "[netplay] lobby renderer failed: %s\n", SDL_GetError());
+    }
+    if (lrend && ltex)
+    {
+        SDL_UpdateTexture(ltex, NULL, lsurf->pixels, lsurf->pitch);
+        SDL_SetRenderDrawColor(lrend, 0, 0, 0, 255);
+        SDL_RenderClear(lrend);
+        SDL_RenderCopy(lrend, ltex, NULL, NULL);
+        SDL_RenderPresent(lrend);
+    }
+    else
+    {
+        SDL_Surface *ws = SDL_GetWindowSurface(lwin);
+        if (ws) { SDL_BlitScaled(lsurf, NULL, ws, NULL); SDL_UpdateWindowSurface(lwin); }
+    }
 }
 #define C_BG 0x0c1020u
 #define C_TXT 0xe8ecffu
@@ -536,6 +554,8 @@ static void lobby_close(void)
     SDL_StopTextInput();
     if (lsurf) { SDL_FreeSurface(lsurf); lsurf = NULL; }
     if (l_engine_win) { video_lobby_release(); l_engine_win = 0; }
+    if (ltex) { SDL_DestroyTexture(ltex); ltex = NULL; }
+    if (lrend) { SDL_DestroyRenderer(lrend); lrend = NULL; }
     if (lwin) { SDL_DestroyWindow(lwin); lwin = NULL; }
 }
 
