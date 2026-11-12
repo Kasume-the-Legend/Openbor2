@@ -135,7 +135,7 @@ int netplay_enabled(void)
     const char *e = getenv("OPENBOR_NET");
     if (e && e[0] == '0') return 0;
     if (e && e[0]) return 1;
-#if defined(ANDROID)
+#if defined(ANDROID) || defined(WIN) || defined(_WIN32)
     return 1;   /* Android: the lobby always shows, and "Play offline" starts the game normally */
 #else
     { FILE *f = open_ini(); if (f) { fclose(f); return 1; } }

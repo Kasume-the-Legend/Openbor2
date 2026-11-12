@@ -30,8 +30,11 @@ jobs:
             mingw-w64-ucrt-x86_64-libogg
             mingw-w64-ucrt-x86_64-libvpx
             mingw-w64-ucrt-x86_64-zlib
+            mingw-w64-ucrt-x86_64-mbedtls
       - name: Build OpenBOR.exe
         working-directory: engine
+        env:
+          OPENBOR_RELAY_URL: ${{ vars.RELAY_URL }}
         run: |
           set -o pipefail
           windres resources/OpenBOR.rc -O coff -o resources/OpenBOR.res 2>&1 | tee ../build.log || true

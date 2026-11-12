@@ -435,7 +435,10 @@ OBJS            = $(MAIN)                                                       
 CFLAGS 	       += $(addprefix -I", $(addsuffix ", $(INCS))) $(ARCHFLAGS) -D$(TARGET_PLATFORM)
 CFLAGS 	       += -g -Wall -Werror -Wno-format-truncation -Wno-stringop-truncation -fsigned-char -std=gnu99
 ifdef BUILD_WIN
-CFLAGS         += -Wno-error
+CFLAGS         += -Wno-error -DNETPLAY_TLS=1
+ifneq ($(strip $(OPENBOR_RELAY_URL)),)
+CFLAGS         += -DNETPLAY_DEFAULT_SERVER=\"$(strip $(OPENBOR_RELAY_URL))\"
+endif
 endif
 
 
@@ -574,7 +577,7 @@ endif
 
 
 ifdef BUILD_WIN
-LIBS           += -lpsapi -lopengl32 -lwinmm -lole32 -loleaut32 -luuid -limm32 -lversion -lsetupapi -lcfgmgr32 -lws2_32 -mwindows
+LIBS           += -lpsapi -lopengl32 -lwinmm -lole32 -loleaut32 -luuid -limm32 -lversion -lsetupapi -lcfgmgr32 -lmbedtls -lmbedx509 -lmbedcrypto -lws2_32 -mwindows
 endif
 
 
